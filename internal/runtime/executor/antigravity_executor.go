@@ -304,7 +304,7 @@ func (e *AntigravityExecutor) HttpRequest(ctx context.Context, auth *cliproxyaut
 		httpReq.Header.Set("Content-Type", contentType)
 	}
 	// Content-Length is managed automatically by Go's http.Client from the Body
-	httpReq.Header.Set("User-Agent", resolveUserAgent(auth))
+	httpReq.Header.Set("User-Agent", resolveUserAgent(auth, e.cfg))
 	httpReq.Close = true // sends Connection: close
 
 	// Inject Authorization: Bearer <token>
@@ -1461,7 +1461,9 @@ func (e *AntigravityExecutor) CountTokens(ctx context.Context, auth *cliproxyaut
 		requestURL.WriteString(base)
 		requestURL.WriteString(antigravityCountTokensPath)
 		if opts.Alt != "" {
-			requestURL.WriteString("?$alt=")
+			requestURL.WriteString("?")
+			requestURL.WriteString(antigravityAltQueryName(e.cfg))
+			requestURL.WriteString("=")
 			requestURL.WriteString(url.QueryEscape(opts.Alt))
 		}
 
@@ -1472,7 +1474,7 @@ func (e *AntigravityExecutor) CountTokens(ctx context.Context, auth *cliproxyaut
 		httpReq.Close = true
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Authorization", "Bearer "+token)
-		httpReq.Header.Set("User-Agent", resolveUserAgent(auth))
+		httpReq.Header.Set("User-Agent", resolveUserAgent(auth, e.cfg))
 		if host := resolveHost(base); host != "" {
 			httpReq.Host = host
 		}
@@ -1857,13 +1859,17 @@ func (e *AntigravityExecutor) buildRequest(ctx context.Context, auth *cliproxyau
 	requestURL.WriteString(path)
 	if stream {
 		if alt != "" {
-			requestURL.WriteString("?$alt=")
+			requestURL.WriteString("?")
+			requestURL.WriteString(antigravityAltQueryName(e.cfg))
+			requestURL.WriteString("=")
 			requestURL.WriteString(url.QueryEscape(alt))
 		} else {
 			requestURL.WriteString("?alt=sse")
 		}
 	} else if alt != "" {
-		requestURL.WriteString("?$alt=")
+		requestURL.WriteString("?")
+		requestURL.WriteString(antigravityAltQueryName(e.cfg))
+		requestURL.WriteString("=")
 		requestURL.WriteString(url.QueryEscape(alt))
 	}
 
@@ -1874,7 +1880,7 @@ func (e *AntigravityExecutor) buildRequest(ctx context.Context, auth *cliproxyau
 			projectID = strings.TrimSpace(pid)
 		}
 	}
-	payload = geminiToAntigravity(modelName, payload, projectID)
+	payload = geminiToAntigravity(modelName, payload, projectID, antigravityOfficialAlignmentEnabled(e.cfg))
 	payload, _ = sjson.SetBytes(payload, "model", modelName)
 
 	// Cap maxOutputTokens to model's max_completion_tokens from registry
@@ -1949,7 +1955,7 @@ func (e *AntigravityExecutor) buildRequest(ctx context.Context, auth *cliproxyau
 	httpReq.Close = true
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+token)
-	httpReq.Header.Set("User-Agent", resolveUserAgent(auth))
+	httpReq.Header.Set("User-Agent", resolveUserAgent(auth, e.cfg))
 	if host := resolveHost(base); host != "" {
 		httpReq.Host = host
 	}
@@ -2069,7 +2075,7 @@ func resolveHost(base string) string {
 	return strings.TrimPrefix(strings.TrimPrefix(base, "https://"), "http://")
 }
 
-func resolveUserAgent(auth *cliproxyauth.Auth) string {
+func resolveUserAgent(auth *cliproxyauth.Auth, cfg *config.Config) string {
 	if auth != nil {
 		if auth.Attributes != nil {
 			if ua := strings.TrimSpace(auth.Attributes["user_agent"]); ua != "" {
@@ -2082,7 +2088,21 @@ func resolveUserAgent(auth *cliproxyauth.Auth) string {
 			}
 		}
 	}
+	if antigravityOfficialAlignmentEnabled(cfg) {
+		return misc.AntigravityOfficialUserAgent()
+	}
 	return misc.AntigravityUserAgent()
+}
+
+func antigravityOfficialAlignmentEnabled(cfg *config.Config) bool {
+	return cfg != nil && cfg.AntigravityOfficialAlignment
+}
+
+func antigravityAltQueryName(cfg *config.Config) string {
+	if antigravityOfficialAlignmentEnabled(cfg) {
+		return "alt"
+	}
+	return "$alt"
 }
 
 func antigravityRetryAttempts(auth *cliproxyauth.Auth, cfg *config.Config) int {
@@ -2268,10 +2288,15 @@ func resolveCustomAntigravityBaseURL(auth *cliproxyauth.Auth) string {
 	return ""
 }
 
-func geminiToAntigravity(modelName string, payload []byte, projectID string) []byte {
+func geminiToAntigravity(modelName string, payload []byte, projectID string, officialAlignment bool) []byte {
 	template := payload
-	template, _ = sjson.SetBytes(template, "model", modelName)
-	template, _ = sjson.SetBytes(template, "userAgent", "antigravity")
+	if officialAlignment {
+		template = setBytesIfMissing(template, "model", modelName)
+		template = setBytesIfMissing(template, "userAgent", "antigravity")
+	} else {
+		template, _ = sjson.SetBytes(template, "model", modelName)
+		template, _ = sjson.SetBytes(template, "userAgent", "antigravity")
+	}
 
 	isImageModel := strings.Contains(modelName, "image")
 
@@ -2281,22 +2306,40 @@ func geminiToAntigravity(modelName string, payload []byte, projectID string) []b
 	} else {
 		reqType = "agent"
 	}
-	template, _ = sjson.SetBytes(template, "requestType", reqType)
+	if officialAlignment {
+		template = setBytesIfMissing(template, "requestType", reqType)
+	} else {
+		template, _ = sjson.SetBytes(template, "requestType", reqType)
+	}
 
 	// Use real project ID from auth if available, otherwise generate random (legacy fallback)
-	if projectID != "" {
+	if officialAlignment && strings.TrimSpace(gjson.GetBytes(template, "project").String()) != "" {
+		// Preserve official envelope project values supplied by the caller.
+	} else if projectID != "" {
 		template, _ = sjson.SetBytes(template, "project", projectID)
 	} else {
 		template, _ = sjson.SetBytes(template, "project", generateProjectID())
 	}
 
 	if isImageModel {
-		template, _ = sjson.SetBytes(template, "requestId", generateImageGenRequestID())
+		if officialAlignment {
+			template = setBytesIfMissing(template, "requestId", generateImageGenRequestID())
+		} else {
+			template, _ = sjson.SetBytes(template, "requestId", generateImageGenRequestID())
+		}
 	} else {
-		template, _ = sjson.SetBytes(template, "requestId", generateRequestID())
-		template, _ = sjson.SetBytes(template, "request.sessionId", generateStableSessionID(payload))
+		if officialAlignment {
+			template = setBytesIfMissing(template, "requestId", generateOfficialRequestID())
+			template = setBytesIfMissing(template, "request.sessionId", generateSessionID())
+		} else {
+			template, _ = sjson.SetBytes(template, "requestId", generateRequestID())
+			template, _ = sjson.SetBytes(template, "request.sessionId", generateStableSessionID(payload))
+		}
 	}
 
+	if officialAlignment && !gjson.GetBytes(template, "enabledCreditTypes").Exists() {
+		template, _ = sjson.SetBytes(template, "enabledCreditTypes", []string{"GOOGLE_ONE_AI"})
+	}
 	template, _ = sjson.DeleteBytes(template, "request.safetySettings")
 	if toolConfig := gjson.GetBytes(template, "toolConfig"); toolConfig.Exists() && !gjson.GetBytes(template, "request.toolConfig").Exists() {
 		template, _ = sjson.SetRawBytes(template, "request.toolConfig", []byte(toolConfig.Raw))
@@ -2305,8 +2348,20 @@ func geminiToAntigravity(modelName string, payload []byte, projectID string) []b
 	return template
 }
 
+func setBytesIfMissing(payload []byte, path, value string) []byte {
+	if strings.TrimSpace(gjson.GetBytes(payload, path).String()) != "" {
+		return payload
+	}
+	updated, _ := sjson.SetBytes(payload, path, value)
+	return updated
+}
+
 func generateRequestID() string {
 	return "agent-" + uuid.NewString()
+}
+
+func generateOfficialRequestID() string {
+	return fmt.Sprintf("agent/%d/%s/0", time.Now().UnixMilli(), uuid.NewString())
 }
 
 func generateImageGenRequestID() string {

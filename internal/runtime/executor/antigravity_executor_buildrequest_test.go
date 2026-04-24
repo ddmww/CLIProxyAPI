@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net/http"
+	"strings"
 	"testing"
 
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
 
@@ -90,6 +93,79 @@ func TestAntigravityBuildRequest_SkipsSchemaSanitizationWithEmptyToolsArray(t *t
 	assertNonSchemaRequestPreserved(t, body)
 }
 
+func TestAntigravityBuildRequest_DefaultAlignmentPreservesLegacyEnvelope(t *testing.T) {
+	req, body := buildRequestFromRawPayload(t, &AntigravityExecutor{}, "gemini-2.5-pro", []byte(`{
+		"project": "caller-project",
+		"requestId": "caller-request",
+		"userAgent": "caller-agent",
+		"requestType": "caller-type",
+		"request": {
+			"sessionId": "caller-session",
+			"contents": [{"role": "user", "parts": [{"text": "hello"}]}]
+		}
+	}`), true, "sse")
+
+	if got := req.URL.RawQuery; got != "$alt=sse" {
+		t.Fatalf("default alignment query = %q, want $alt=sse", got)
+	}
+	if got := req.Header.Get("User-Agent"); !strings.Contains(got, "darwin/arm64") {
+		t.Fatalf("default User-Agent should keep legacy platform, got %q", got)
+	}
+	if got := body["project"]; got == "caller-project" {
+		t.Fatalf("legacy envelope should overwrite caller project")
+	}
+	if got := body["requestId"]; got == "caller-request" {
+		t.Fatalf("legacy envelope should overwrite caller requestId")
+	}
+	if got := body["userAgent"]; got != "antigravity" {
+		t.Fatalf("legacy envelope userAgent = %v, want antigravity", got)
+	}
+	if _, ok := body["enabledCreditTypes"]; ok {
+		t.Fatalf("legacy envelope should not inject enabledCreditTypes")
+	}
+}
+
+func TestAntigravityBuildRequest_OfficialAlignmentPreservesEnvelope(t *testing.T) {
+	req, body := buildRequestFromRawPayload(t, &AntigravityExecutor{cfg: &config.Config{AntigravityOfficialAlignment: true}}, "gemini-2.5-pro", []byte(`{
+		"project": "caller-project",
+		"requestId": "caller-request",
+		"userAgent": "caller-agent",
+		"requestType": "caller-type",
+		"request": {
+			"sessionId": "caller-session",
+			"contents": [{"role": "user", "parts": [{"text": "hello"}]}]
+		}
+	}`), true, "sse")
+
+	if got := req.URL.RawQuery; got != "alt=sse" {
+		t.Fatalf("official alignment query = %q, want alt=sse", got)
+	}
+	if got := req.Header.Get("User-Agent"); !strings.Contains(got, "windows/amd64") {
+		t.Fatalf("official alignment User-Agent should use Windows app platform, got %q", got)
+	}
+	for key, want := range map[string]string{
+		"project":     "caller-project",
+		"requestId":   "caller-request",
+		"userAgent":   "caller-agent",
+		"requestType": "caller-type",
+	} {
+		if got := body[key]; got != want {
+			t.Fatalf("official alignment %s = %v, want %s", key, got, want)
+		}
+	}
+	request, ok := body["request"].(map[string]any)
+	if !ok {
+		t.Fatalf("request missing or invalid type")
+	}
+	if got := request["sessionId"]; got != "caller-session" {
+		t.Fatalf("official alignment request.sessionId = %v, want caller-session", got)
+	}
+	credits, ok := body["enabledCreditTypes"].([]any)
+	if !ok || len(credits) != 1 || credits[0] != "GOOGLE_ONE_AI" {
+		t.Fatalf("official alignment enabledCreditTypes = %#v, want [GOOGLE_ONE_AI]", body["enabledCreditTypes"])
+	}
+}
+
 func assertNonSchemaRequestPreserved(t *testing.T, body map[string]any) {
 	t.Helper()
 
@@ -171,10 +247,16 @@ func buildRequestBodyFromPayload(t *testing.T, modelName string) map[string]any 
 func buildRequestBodyFromRawPayload(t *testing.T, modelName string, payload []byte) map[string]any {
 	t.Helper()
 
-	executor := &AntigravityExecutor{}
+	_, body := buildRequestFromRawPayload(t, &AntigravityExecutor{}, modelName, payload, false, "")
+	return body
+}
+
+func buildRequestFromRawPayload(t *testing.T, executor *AntigravityExecutor, modelName string, payload []byte, stream bool, alt string) (*http.Request, map[string]any) {
+	t.Helper()
+
 	auth := &cliproxyauth.Auth{}
 
-	req, err := executor.buildRequest(context.Background(), auth, "token", modelName, payload, false, "", "https://example.com")
+	req, err := executor.buildRequest(context.Background(), auth, "token", modelName, payload, stream, alt, "https://example.com")
 	if err != nil {
 		t.Fatalf("buildRequest error: %v", err)
 	}
@@ -188,7 +270,7 @@ func buildRequestBodyFromRawPayload(t *testing.T, modelName string, payload []by
 	if err := json.Unmarshal(raw, &body); err != nil {
 		t.Fatalf("unmarshal request body error: %v, body=%s", err, string(raw))
 	}
-	return body
+	return req, body
 }
 
 func extractFirstFunctionDeclaration(t *testing.T, body map[string]any) map[string]any {

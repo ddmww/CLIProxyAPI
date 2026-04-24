@@ -107,6 +107,13 @@ func AntigravityUserAgent() string {
 	return fmt.Sprintf("antigravity/%s darwin/arm64", AntigravityLatestVersion())
 }
 
+// AntigravityOfficialUserAgent returns the desktop Antigravity User-Agent shape
+// observed for the official Windows app. This is intentionally opt-in because
+// the historical proxy default uses the macOS-shaped string above.
+func AntigravityOfficialUserAgent() string {
+	return fmt.Sprintf("antigravity/%s windows/amd64", AntigravityLatestVersion())
+}
+
 func fetchAntigravityLatestVersion(ctx context.Context) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
