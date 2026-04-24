@@ -96,6 +96,12 @@ type Config struct {
 
 	AntigravitySignatureBypassStrict *bool `yaml:"antigravity-signature-bypass-strict,omitempty" json:"antigravity-signature-bypass-strict,omitempty"`
 
+	// AntigravityOfficialAlignment enables a conservative request-surface
+	// alignment mode for Antigravity upstream calls. It preserves existing
+	// behavior by default and only changes fields that are safe to express over
+	// the current v1internal JSON endpoint.
+	AntigravityOfficialAlignment bool `yaml:"antigravity-official-alignment" json:"antigravity-official-alignment"`
+
 	// GeminiKey defines Gemini API key configurations with optional routing overrides.
 	GeminiKey []GeminiKey `yaml:"gemini-api-key" json:"gemini-api-key"`
 

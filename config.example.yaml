@@ -135,6 +135,12 @@ nonstream-keepalive-interval: 0
 # When false (default), only checks R/E prefix + base64 + first byte 0x12.
 # antigravity-signature-bypass-strict: false
 
+# Conservative Antigravity official-app request alignment.
+# Default false keeps upstream request behavior unchanged. When true, the
+# Antigravity executor uses Windows official-app shaped request headers and
+# preserves caller-supplied v1internal envelope fields where possible.
+# antigravity-official-alignment: false
+
 # Gemini API keys
 # gemini-api-key:
 #   - api-key: "AIzaSy...01"
