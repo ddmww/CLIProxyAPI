@@ -138,7 +138,8 @@ nonstream-keepalive-interval: 0
 # Conservative Antigravity official-app request alignment.
 # Default false keeps upstream request behavior unchanged. When true, the
 # Antigravity executor uses Windows official-app shaped request headers and
-# preserves caller-supplied v1internal envelope fields where possible.
+# preserves caller-supplied v1internal envelope fields where possible. It also
+# keeps the Go default/proxy-aware transport so TLS ALPN can negotiate HTTP/2.
 # antigravity-official-alignment: false
 
 # Gemini API keys

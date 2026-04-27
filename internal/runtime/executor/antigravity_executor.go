@@ -220,13 +220,17 @@ func initAntigravityTransport() {
 	antigravityTransport = cloneTransportWithHTTP11(base)
 }
 
-// newAntigravityHTTPClient creates an HTTP client specifically for Antigravity,
-// enforcing HTTP/1.1 by disabling HTTP/2 to perfectly mimic Node.js https defaults.
-// The underlying Transport is a singleton to avoid leaking connection pools.
+// newAntigravityHTTPClient creates an HTTP client specifically for Antigravity.
+// Legacy mode preserves the existing Node.js-like HTTP/1.1 behavior. Official
+// alignment mode keeps the proxy-aware/default Go transport intact so TLS ALPN
+// can negotiate the protocol used by the official language server.
 func newAntigravityHTTPClient(ctx context.Context, cfg *config.Config, auth *cliproxyauth.Auth, timeout time.Duration) *http.Client {
-	antigravityTransportOnce.Do(initAntigravityTransport)
-
 	client := helps.NewProxyAwareHTTPClient(ctx, cfg, auth, timeout)
+	if antigravityOfficialAlignmentEnabled(cfg) {
+		return client
+	}
+
+	antigravityTransportOnce.Do(initAntigravityTransport)
 	// If no transport is set, use the shared HTTP/1.1 transport.
 	if client.Transport == nil {
 		client.Transport = antigravityTransport

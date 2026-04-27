@@ -166,6 +166,56 @@ func TestAntigravityBuildRequest_OfficialAlignmentPreservesEnvelope(t *testing.T
 	}
 }
 
+func TestNewAntigravityHTTPClient_DefaultForcesHTTP11(t *testing.T) {
+	client := newAntigravityHTTPClient(context.Background(), nil, nil, 0)
+
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("default client transport = %T, want *http.Transport", client.Transport)
+	}
+	if transport.ForceAttemptHTTP2 {
+		t.Fatalf("default client should disable ForceAttemptHTTP2")
+	}
+	if transport.TLSClientConfig == nil {
+		t.Fatalf("default client should configure TLS ALPN")
+	}
+	if got := strings.Join(transport.TLSClientConfig.NextProtos, ","); got != "http/1.1" {
+		t.Fatalf("default client ALPN = %q, want http/1.1", got)
+	}
+	if transport.TLSNextProto == nil {
+		t.Fatalf("default client should set empty TLSNextProto map to block implicit HTTP/2")
+	}
+}
+
+func TestNewAntigravityHTTPClient_OfficialAlignmentKeepsDefaultTransport(t *testing.T) {
+	client := newAntigravityHTTPClient(context.Background(), &config.Config{AntigravityOfficialAlignment: true}, nil, 0)
+
+	if client.Transport != nil {
+		t.Fatalf("official alignment without proxy should keep nil transport for http.DefaultTransport, got %T", client.Transport)
+	}
+}
+
+func TestNewAntigravityHTTPClient_OfficialAlignmentKeepsProxyTransportHTTP2Capable(t *testing.T) {
+	client := newAntigravityHTTPClient(context.Background(), &config.Config{
+		AntigravityOfficialAlignment: true,
+		SDKConfig:                    config.SDKConfig{ProxyURL: "http://127.0.0.1:7897"},
+	}, nil, 0)
+
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("official alignment proxy transport = %T, want *http.Transport", client.Transport)
+	}
+	if transport.Proxy == nil {
+		t.Fatalf("official alignment proxy transport should preserve proxy settings")
+	}
+	if transport.TLSClientConfig != nil && strings.Join(transport.TLSClientConfig.NextProtos, ",") == "http/1.1" {
+		t.Fatalf("official alignment proxy transport should not force ALPN to http/1.1")
+	}
+	if transport.TLSNextProto != nil && len(transport.TLSNextProto) == 0 {
+		t.Fatalf("official alignment proxy transport should not install empty TLSNextProto map")
+	}
+}
+
 func assertNonSchemaRequestPreserved(t *testing.T, body map[string]any) {
 	t.Helper()
 
