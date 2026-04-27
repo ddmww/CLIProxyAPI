@@ -81,7 +81,7 @@ func (e *GeminiCLIExecutor) PrepareRequest(req *http.Request, auth *cliproxyauth
 		return statusErr{code: http.StatusUnauthorized, msg: "missing access token"}
 	}
 	req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
-	applyGeminiCLIHeaders(req, "unknown")
+	applyGeminiCLIHeaders(req, "unknown", geminiCLIOfficialAlignmentEnabled(e.cfg))
 	var attrs map[string]string
 	if auth != nil {
 		attrs = auth.Attributes
@@ -184,7 +184,7 @@ func (e *GeminiCLIExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth
 
 		url := fmt.Sprintf("%s/%s:%s", codeAssistEndpoint, codeAssistVersion, action)
 		if opts.Alt != "" && action != "countTokens" {
-			url = url + fmt.Sprintf("?$alt=%s", opts.Alt)
+			url = appendGeminiCLIAltParam(url, opts.Alt, e.cfg)
 		}
 
 		reqHTTP, errReq := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
@@ -194,7 +194,7 @@ func (e *GeminiCLIExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth
 		}
 		reqHTTP.Header.Set("Content-Type", "application/json")
 		reqHTTP.Header.Set("Authorization", "Bearer "+tok.AccessToken)
-		applyGeminiCLIHeaders(reqHTTP, attemptModel)
+		applyGeminiCLIHeaders(reqHTTP, attemptModel, geminiCLIOfficialAlignmentEnabled(e.cfg))
 		reqHTTP.Header.Set("Accept", "application/json")
 		util.ApplyCustomHeadersFromAttrs(reqHTTP, auth.Attributes)
 		helps.RecordAPIRequest(ctx, e.cfg, helps.UpstreamRequestLog{
@@ -330,7 +330,7 @@ func (e *GeminiCLIExecutor) ExecuteStream(ctx context.Context, auth *cliproxyaut
 		if opts.Alt == "" {
 			url = url + "?alt=sse"
 		} else {
-			url = url + fmt.Sprintf("?$alt=%s", opts.Alt)
+			url = appendGeminiCLIAltParam(url, opts.Alt, e.cfg)
 		}
 
 		reqHTTP, errReq := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
@@ -340,7 +340,7 @@ func (e *GeminiCLIExecutor) ExecuteStream(ctx context.Context, auth *cliproxyaut
 		}
 		reqHTTP.Header.Set("Content-Type", "application/json")
 		reqHTTP.Header.Set("Authorization", "Bearer "+tok.AccessToken)
-		applyGeminiCLIHeaders(reqHTTP, attemptModel)
+		applyGeminiCLIHeaders(reqHTTP, attemptModel, geminiCLIOfficialAlignmentEnabled(e.cfg))
 		reqHTTP.Header.Set("Accept", "text/event-stream")
 		util.ApplyCustomHeadersFromAttrs(reqHTTP, auth.Attributes)
 		helps.RecordAPIRequest(ctx, e.cfg, helps.UpstreamRequestLog{
@@ -513,7 +513,7 @@ func (e *GeminiCLIExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.
 
 		url := fmt.Sprintf("%s/%s:%s", codeAssistEndpoint, codeAssistVersion, "countTokens")
 		if opts.Alt != "" {
-			url = url + fmt.Sprintf("?$alt=%s", opts.Alt)
+			url = appendGeminiCLIAltParam(url, opts.Alt, e.cfg)
 		}
 
 		reqHTTP, errReq := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
@@ -522,7 +522,7 @@ func (e *GeminiCLIExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.
 		}
 		reqHTTP.Header.Set("Content-Type", "application/json")
 		reqHTTP.Header.Set("Authorization", "Bearer "+tok.AccessToken)
-		applyGeminiCLIHeaders(reqHTTP, baseModel)
+		applyGeminiCLIHeaders(reqHTTP, baseModel, geminiCLIOfficialAlignmentEnabled(e.cfg))
 		reqHTTP.Header.Set("Accept", "application/json")
 		util.ApplyCustomHeadersFromAttrs(reqHTTP, auth.Attributes)
 		helps.RecordAPIRequest(ctx, e.cfg, helps.UpstreamRequestLog{
@@ -721,6 +721,10 @@ func newHTTPClient(ctx context.Context, cfg *config.Config, auth *cliproxyauth.A
 	return helps.NewProxyAwareHTTPClient(ctx, cfg, auth, timeout)
 }
 
+func geminiCLIOfficialAlignmentEnabled(cfg *config.Config) bool {
+	return cfg != nil && cfg.GeminiCLIOfficialAlignment
+}
+
 func cloneMap(in map[string]any) map[string]any {
 	if in == nil {
 		return nil
@@ -747,10 +751,28 @@ func stringValue(m map[string]any, key string) string {
 	return ""
 }
 
+// appendGeminiCLIAltParam appends the Code Assist alt query parameter.
+// Official Gemini CLI uses gaxios params, which serializes to alt=... rather than $alt=....
+func appendGeminiCLIAltParam(url, alt string, cfg *config.Config) string {
+	if strings.TrimSpace(alt) == "" {
+		return url
+	}
+	key := "$alt"
+	if geminiCLIOfficialAlignmentEnabled(cfg) {
+		key = "alt"
+	}
+	return url + fmt.Sprintf("?%s=%s", key, alt)
+}
+
 // applyGeminiCLIHeaders sets required headers for the Gemini CLI upstream.
 // User-Agent is always forced to the GeminiCLI format regardless of the client's value,
 // so that upstream identifies the request as a native GeminiCLI client.
-func applyGeminiCLIHeaders(r *http.Request, model string) {
+func applyGeminiCLIHeaders(r *http.Request, model string, officialAlignment bool) {
+	if officialAlignment {
+		r.Header.Set("User-Agent", misc.GeminiCLIOfficialUserAgent(model))
+		r.Header.Del("X-Goog-Api-Client")
+		return
+	}
 	r.Header.Set("User-Agent", misc.GeminiCLIUserAgent(model))
 	r.Header.Set("X-Goog-Api-Client", misc.GeminiCLIApiClientHeader)
 }

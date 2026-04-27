@@ -102,6 +102,11 @@ type Config struct {
 	// the current v1internal JSON endpoint.
 	AntigravityOfficialAlignment bool `yaml:"antigravity-official-alignment" json:"antigravity-official-alignment"`
 
+	// GeminiCLIOfficialAlignment enables a conservative request-surface
+	// alignment mode for Gemini CLI Code Assist upstream calls. It preserves
+	// existing behavior by default.
+	GeminiCLIOfficialAlignment bool `yaml:"gemini-cli-official-alignment" json:"gemini-cli-official-alignment"`
+
 	// GeminiKey defines Gemini API key configurations with optional routing overrides.
 	GeminiKey []GeminiKey `yaml:"gemini-api-key" json:"gemini-api-key"`
 

@@ -14,6 +14,9 @@ const (
 	// GeminiCLIVersion is the version string reported in the User-Agent for upstream requests.
 	GeminiCLIVersion = "0.31.0"
 
+	// GeminiCLIOfficialVersion is the Gemini CLI version observed in the upstream source tree.
+	GeminiCLIOfficialVersion = "0.41.0-nightly.20260423.gaa05b4583"
+
 	// GeminiCLIApiClientHeader is the value for the X-Goog-Api-Client header sent to the Gemini CLI upstream.
 	GeminiCLIApiClientHeader = "google-genai-sdk/1.41.0 gl-node/v22.19.0"
 )
@@ -47,6 +50,14 @@ func GeminiCLIUserAgent(model string) string {
 		model = "unknown"
 	}
 	return fmt.Sprintf("GeminiCLI/%s/%s (%s; %s)", GeminiCLIVersion, model, geminiCLIOS(), geminiCLIArch())
+}
+
+// GeminiCLIOfficialUserAgent returns the current official Gemini CLI Code Assist User-Agent shape.
+func GeminiCLIOfficialUserAgent(model string) string {
+	if model == "" {
+		model = "unknown"
+	}
+	return fmt.Sprintf("GeminiCLI/%s/%s (%s; %s; terminal)", GeminiCLIOfficialVersion, model, geminiCLIOS(), geminiCLIArch())
 }
 
 // ScrubProxyAndFingerprintHeaders removes all headers that could reveal
